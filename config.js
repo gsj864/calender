@@ -1,7 +1,5 @@
 // Firebase configuration (global)
-// NOTE: This file is a plain browser script (no imports).
-// The actual Firebase initialization happens in `index.html` (module script).
-const firebaseConfig = {
+window.firebaseConfig = {
   apiKey: "AIzaSyA6cJ17ONNniVeARZkdSaKbOnuPyTR1iUA",
   authDomain: "calendar-7ed47.firebaseapp.com",
   projectId: "calendar-7ed47",
