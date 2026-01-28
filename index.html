@@ -157,29 +157,34 @@
         </div>
     </div>
 
-    <script src="config.js"></script>
-
-    <!-- Firebase SDK (module) - 모바일에서도 CDN으로 로드 -->
+    <!-- Firebase SDK (qna와 동일: index에 설정 + data.js 동적 로드) -->
     <script type="module">
-        try {
-            const { initializeApp } = await import("https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js");
-            const { getAnalytics } = await import("https://www.gstatic.com/firebasejs/10.7.1/firebase-analytics.js");
-            const { getFirestore } = await import("https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js");
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+        import { getFirestore } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+        import { getAnalytics } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-analytics.js';
 
-            if (!window.firebaseConfig) throw new Error('firebaseConfig 없음');
-            const app = initializeApp(window.firebaseConfig);
-            const analytics = getAnalytics(app);
-            const db = getFirestore(app);
+        const firebaseConfig = {
+            apiKey: "AIzaSyA6cJ17ONNniVeARZkdSaKbOnuPyTR1iUA",
+            authDomain: "calendar-7ed47.firebaseapp.com",
+            projectId: "calendar-7ed47",
+            storageBucket: "calendar-7ed47.firebasestorage.app",
+            messagingSenderId: "473050962088",
+            appId: "1:473050962088:web:8b1c44232c72718f47ca9d",
+            measurementId: "G-SHW5R0BMTK"
+        };
 
-            window.db = db;
-            window.firebaseApp = app;
-            window.firebaseAnalytics = analytics;
-            window.firebaseReady = true;
-        } catch (e) {
-            console.warn('Firebase 로드 실패 (모바일/오프라인 시 LocalStorage 사용):', e);
-            window.firebaseReady = true;
-        }
-        window.dispatchEvent(new Event('firebase-ready'));
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const analytics = getAnalytics(app);
+
+        window.firebaseApp = app;
+        window.firebaseDb = db;
+        window.firebaseAnalytics = analytics;
+
+        const dataScript = document.createElement('script');
+        dataScript.type = 'module';
+        dataScript.src = 'data.js';
+        document.body.appendChild(dataScript);
     </script>
 
     <script src="script.js"></script>

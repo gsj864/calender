@@ -34,9 +34,29 @@ const confirmPasswordBtn = document.getElementById('confirmPasswordBtn');
 const cancelPasswordBtn = document.getElementById('cancelPasswordBtn');
 const closePasswordModalBtn = document.getElementById('closePasswordModal');
 
+// Firebase + CalendarDataManager 로드 대기 (qna logic.js 패턴, 모바일용 타임아웃 포함)
+function waitForFirebase() {
+    return new Promise((resolve) => {
+        if (window.firebaseDb && window.CalendarDataManager) {
+            resolve();
+            return;
+        }
+        const checkInterval = setInterval(() => {
+            if (window.firebaseDb && window.CalendarDataManager) {
+                clearInterval(checkInterval);
+                resolve();
+            }
+        }, 100);
+        // 모바일/느린 환경: 5초 후에는 그대로 시작 (LocalStorage만 사용)
+        setTimeout(() => {
+            clearInterval(checkInterval);
+            resolve();
+        }, 5000);
+    });
+}
+
 // 초기화
 async function init() {
-    // Prevent duplicate init (prevents duplicate event listeners -> month skips)
     if (hasInitialized) return;
     hasInitialized = true;
 
@@ -46,96 +66,15 @@ async function init() {
     updateModeUI();
 }
 
-// Firestore에서 일정 로드
+// 일정 로드 (CalendarDataManager 사용)
 async function loadEvents() {
-    // Firebase가 로드될 때까지 대기
-    let retries = 0;
-    while (!window.db && retries < 50) {
-        await new Promise(resolve => setTimeout(resolve, 100));
-        retries++;
-    }
-
-    if (!window.db) {
-        // Firebase가 로드되지 않았으면 LocalStorage 사용
+    const DM = window.CalendarDataManager;
+    if (!DM) {
         const stored = localStorage.getItem('calendarEvents');
         events = stored ? JSON.parse(stored) : [];
         return;
     }
-
-    try {
-        const { collection, getDocs } = await import("https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js");
-        const eventsRef = collection(window.db, 'events');
-        const snapshot = await getDocs(eventsRef);
-        
-        events = [];
-        snapshot.forEach((doc) => {
-            events.push({
-                id: doc.id,
-                ...doc.data()
-            });
-        });
-        
-        // Firestore에서 로드한 데이터를 LocalStorage에도 백업
-        localStorage.setItem('calendarEvents', JSON.stringify(events));
-    } catch (error) {
-        console.error('일정 로드 실패:', error);
-        // 에러 발생 시 LocalStorage에서 로드
-        const stored = localStorage.getItem('calendarEvents');
-        events = stored ? JSON.parse(stored) : [];
-    }
-}
-
-// Firestore에 일정 저장
-async function saveEvents() {
-    if (!window.db) {
-        // Firebase가 아직 로드되지 않았으면 LocalStorage 사용
-        localStorage.setItem('calendarEvents', JSON.stringify(events));
-        return;
-    }
-
-    try {
-        const { collection, doc, setDoc, deleteDoc, getDocs } = await import("https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js");
-        const eventsRef = collection(window.db, 'events');
-        
-        // 기존 Firestore의 모든 문서 가져오기
-        const snapshot = await getDocs(eventsRef);
-        const existingIds = new Set();
-        snapshot.forEach((doc) => {
-            existingIds.add(doc.id);
-        });
-        
-        // 현재 events 배열의 ID들
-        const currentIds = new Set(events.map(e => e.id));
-        
-        // 삭제된 일정 제거
-        for (const id of existingIds) {
-            if (!currentIds.has(id)) {
-                const eventRef = doc(eventsRef, id);
-                await deleteDoc(eventRef);
-            }
-        }
-        
-        // 모든 일정을 Firestore에 저장/업데이트
-        for (const event of events) {
-            const eventRef = doc(eventsRef, event.id);
-            await setDoc(eventRef, {
-                title: event.title,
-                description: event.description || '',
-                date: event.date,
-                startTime: event.startTime || '',
-                endTime: event.endTime || '',
-                type: event.type,
-                isPublic: event.isPublic
-            }, { merge: true });
-        }
-        
-        // LocalStorage에도 백업 저장
-        localStorage.setItem('calendarEvents', JSON.stringify(events));
-    } catch (error) {
-        console.error('일정 저장 실패:', error);
-        // 에러 발생 시 LocalStorage에 저장
-        localStorage.setItem('calendarEvents', JSON.stringify(events));
-    }
+    events = await DM.getEvents();
 }
 
 // 이벤트 리스너 설정
@@ -469,7 +408,7 @@ function closeEventModal() {
     eventForm.reset();
 }
 
-// 일정 제출 처리
+// 일정 제출 처리 (CalendarDataManager 사용)
 async function handleEventSubmit(e) {
     e.preventDefault();
 
@@ -482,43 +421,25 @@ async function handleEventSubmit(e) {
     const type = document.getElementById('eventType').value;
     const isPublic = document.getElementById('eventIsPublic').checked;
 
-    if (id) {
-        // 수정
-        const index = events.findIndex(e => e.id === id);
-        if (index !== -1) {
-            events[index] = {
-                ...events[index],
-                title,
-                description,
-                date,
-                startTime,
-                endTime,
-                type,
-                isPublic
-            };
-        }
+    const DM = window.CalendarDataManager;
+    const payload = { title, description, date, startTime, endTime, type, isPublic };
+
+    if (id && DM) {
+        await DM.updateEvent(id, payload);
+    } else if (DM) {
+        await DM.addEvent(payload);
     } else {
-        // 추가
         const newEvent = {
             id: 'event_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
-            title,
-            description,
-            date,
-            startTime,
-            endTime,
-            type,
-            isPublic
+            ...payload
         };
         events.push(newEvent);
+        localStorage.setItem('calendarEvents', JSON.stringify(events));
     }
 
-    await saveEvents();
+    await loadEvents();
     renderCalendar();
-    
-    if (selectedDate) {
-        displayEventsForDate(selectedDate);
-    }
-    
+    if (selectedDate) displayEventsForDate(selectedDate);
     closeEventModal();
 }
 
@@ -536,31 +457,20 @@ function closeDeleteModal() {
     eventToDelete = null;
 }
 
-// 삭제 확인
+// 삭제 확인 (CalendarDataManager 사용)
 async function confirmDelete() {
-    if (eventToDelete) {
-        // Firestore에서 삭제
-        if (window.db) {
-            try {
-                const { doc, deleteDoc, collection } = await import("https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js");
-                const eventRef = doc(collection(window.db, 'events'), eventToDelete);
-                await deleteDoc(eventRef);
-            } catch (error) {
-                console.error('일정 삭제 실패:', error);
-            }
-        }
-        
-        // 로컬 배열에서 삭제
+    if (!eventToDelete) return;
+    const DM = window.CalendarDataManager;
+    if (DM) {
+        await DM.deleteEvent(eventToDelete);
+    } else {
         events = events.filter(e => e.id !== eventToDelete);
-        await saveEvents();
-        renderCalendar();
-        
-        if (selectedDate) {
-            displayEventsForDate(selectedDate);
-        }
-        
-        closeDeleteModal();
+        localStorage.setItem('calendarEvents', JSON.stringify(events));
     }
+    await loadEvents();
+    renderCalendar();
+    if (selectedDate) displayEventsForDate(selectedDate);
+    closeDeleteModal();
 }
 
 // 비밀번호 모달 열기
@@ -617,25 +527,8 @@ function isSameDay(date1, date2) {
            date1.getDate() === date2.getDate();
 }
 
-// 초기화: Firebase 준비 후 또는 DOM 로드 후 1회만 실행
-function runInit() {
-    if (hasInitialized) return;
-    if (window.firebaseReady) {
-        init();
-        return;
-    }
-    window.addEventListener('firebase-ready', function onReady() {
-        window.removeEventListener('firebase-ready', onReady);
-        init();
-    }, { once: true });
-    // 모바일/느린 환경: Firebase 로드 실패 시에도 3초 후 실행 (LocalStorage 사용)
-    setTimeout(function () {
-        if (!hasInitialized) init();
-    }, 3000);
-}
-
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', runInit);
-} else {
-    runInit();
-}
+// 초기화 실행 (qna와 동일: Firebase + data.js 로드 대기 후 1회만)
+(async function () {
+    await waitForFirebase();
+    init();
+})();
