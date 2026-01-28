@@ -617,5 +617,25 @@ function isSameDay(date1, date2) {
            date1.getDate() === date2.getDate();
 }
 
-// 초기화 실행 (1회만)
-init();
+// 초기화: Firebase 준비 후 또는 DOM 로드 후 1회만 실행
+function runInit() {
+    if (hasInitialized) return;
+    if (window.firebaseReady) {
+        init();
+        return;
+    }
+    window.addEventListener('firebase-ready', function onReady() {
+        window.removeEventListener('firebase-ready', onReady);
+        init();
+    }, { once: true });
+    // 모바일/느린 환경: Firebase 로드 실패 시에도 3초 후 실행 (LocalStorage 사용)
+    setTimeout(function () {
+        if (!hasInitialized) init();
+    }, 3000);
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', runInit);
+} else {
+    runInit();
+}
