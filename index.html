@@ -150,39 +150,26 @@
         </div>
     </div>
 
-    <!-- Firebase SDK -->
+    <script src="config.js"></script>
+
+    <!-- Firebase SDK (module) -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
         import { getAnalytics } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-analytics.js";
         import { getFirestore } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
-        
-        // Firebase configuration from config.js
-        const firebaseConfig = {
-            apiKey: "AIzaSyA6cJ17ONNniVeARZkdSaKbOnuPyTR1iUA",
-            authDomain: "calendar-7ed47.firebaseapp.com",
-            projectId: "calendar-7ed47",
-            storageBucket: "calendar-7ed47.firebasestorage.app",
-            messagingSenderId: "473050962088",
-            appId: "1:473050962088:web:8b1c44232c72718f47ca9d",
-            measurementId: "G-SHW5R0BMTK"
-        };
 
-        // Initialize Firebase
-        const app = initializeApp(firebaseConfig);
+        // Initialize Firebase using config.js
+        const app = initializeApp(window.firebaseConfig);
         const analytics = getAnalytics(app);
         const db = getFirestore(app);
 
-        // Make db available globally
+        // expose globally for script.js
         window.db = db;
         window.firebaseApp = app;
+        window.firebaseAnalytics = analytics;
         window.firebaseReady = true;
-        
-        // Initialize script after Firebase is ready
-        if (window.initCalendar) {
-            window.initCalendar();
-        }
     </script>
-    <script src="config.js"></script>
+
     <script src="script.js"></script>
 </body>
 </html>

@@ -5,6 +5,7 @@ let selectedDate = null;
 let events = [];
 let eventToDelete = null;
 const ADMIN_PASSWORD = 'gsj864';
+let hasInitialized = false;
 
 // DOM 요소
 const currentMonthEl = document.getElementById('currentMonth');
@@ -34,33 +35,124 @@ const cancelPasswordBtn = document.getElementById('cancelPasswordBtn');
 const closePasswordModalBtn = document.getElementById('closePasswordModal');
 
 // 초기화
-function init() {
-    loadEvents();
+async function init() {
+    // Prevent duplicate init (prevents duplicate event listeners -> month skips)
+    if (hasInitialized) return;
+    hasInitialized = true;
+
+    await loadEvents();
     renderCalendar();
     setupEventListeners();
     updateModeUI();
 }
 
-// LocalStorage에서 일정 로드
-function loadEvents() {
-    const stored = localStorage.getItem('calendarEvents');
-    events = stored ? JSON.parse(stored) : [];
+// Firestore에서 일정 로드
+async function loadEvents() {
+    // Firebase가 로드될 때까지 대기
+    let retries = 0;
+    while (!window.db && retries < 50) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        retries++;
+    }
+
+    if (!window.db) {
+        // Firebase가 로드되지 않았으면 LocalStorage 사용
+        const stored = localStorage.getItem('calendarEvents');
+        events = stored ? JSON.parse(stored) : [];
+        return;
+    }
+
+    try {
+        const { collection, getDocs } = await import("https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js");
+        const eventsRef = collection(window.db, 'events');
+        const snapshot = await getDocs(eventsRef);
+        
+        events = [];
+        snapshot.forEach((doc) => {
+            events.push({
+                id: doc.id,
+                ...doc.data()
+            });
+        });
+        
+        // Firestore에서 로드한 데이터를 LocalStorage에도 백업
+        localStorage.setItem('calendarEvents', JSON.stringify(events));
+    } catch (error) {
+        console.error('일정 로드 실패:', error);
+        // 에러 발생 시 LocalStorage에서 로드
+        const stored = localStorage.getItem('calendarEvents');
+        events = stored ? JSON.parse(stored) : [];
+    }
 }
 
-// LocalStorage에 일정 저장
-function saveEvents() {
-    localStorage.setItem('calendarEvents', JSON.stringify(events));
+// Firestore에 일정 저장
+async function saveEvents() {
+    if (!window.db) {
+        // Firebase가 아직 로드되지 않았으면 LocalStorage 사용
+        localStorage.setItem('calendarEvents', JSON.stringify(events));
+        return;
+    }
+
+    try {
+        const { collection, doc, setDoc, deleteDoc, getDocs } = await import("https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js");
+        const eventsRef = collection(window.db, 'events');
+        
+        // 기존 Firestore의 모든 문서 가져오기
+        const snapshot = await getDocs(eventsRef);
+        const existingIds = new Set();
+        snapshot.forEach((doc) => {
+            existingIds.add(doc.id);
+        });
+        
+        // 현재 events 배열의 ID들
+        const currentIds = new Set(events.map(e => e.id));
+        
+        // 삭제된 일정 제거
+        for (const id of existingIds) {
+            if (!currentIds.has(id)) {
+                const eventRef = doc(eventsRef, id);
+                await deleteDoc(eventRef);
+            }
+        }
+        
+        // 모든 일정을 Firestore에 저장/업데이트
+        for (const event of events) {
+            const eventRef = doc(eventsRef, event.id);
+            await setDoc(eventRef, {
+                title: event.title,
+                description: event.description || '',
+                date: event.date,
+                startTime: event.startTime || '',
+                endTime: event.endTime || '',
+                type: event.type,
+                isPublic: event.isPublic
+            }, { merge: true });
+        }
+        
+        // LocalStorage에도 백업 저장
+        localStorage.setItem('calendarEvents', JSON.stringify(events));
+    } catch (error) {
+        console.error('일정 저장 실패:', error);
+        // 에러 발생 시 LocalStorage에 저장
+        localStorage.setItem('calendarEvents', JSON.stringify(events));
+    }
 }
 
 // 이벤트 리스너 설정
 function setupEventListeners() {
     prevMonthBtn.addEventListener('click', () => {
-        currentDate.setMonth(currentDate.getMonth() - 1);
+        const year = currentDate.getFullYear();
+        const month = currentDate.getMonth();
+        // 날짜를 1일로 설정한 후 월 변경 (날짜 오버플로우 방지)
+        currentDate = new Date(year, month - 1, 1);
         renderCalendar();
     });
 
     nextMonthBtn.addEventListener('click', () => {
-        currentDate.setMonth(currentDate.getMonth() + 1);
+        const year = currentDate.getFullYear();
+        const month = currentDate.getMonth();
+        // 날짜를 1일로 설정한 후 월 변경 (날짜 오버플로우 방지)
+        currentDate = new Date(year, month + 1, 1);
         renderCalendar();
     });
 
@@ -146,14 +238,16 @@ function renderCalendar() {
 
     // 첫 번째 날짜 (1일)
     const firstDay = new Date(year, month, 1);
-    const lastDay = new Date(year, month + 1, 0);
     const startDate = new Date(firstDay);
     startDate.setDate(startDate.getDate() - firstDay.getDay()); // 주의 첫 날로 조정
+    
+    // 시작 날짜의 타임스탬프 저장
+    const startTimestamp = startDate.getTime();
 
     // 6주 표시 (42일)
     for (let i = 0; i < 42; i++) {
-        const date = new Date(startDate);
-        date.setDate(startDate.getDate() + i);
+        // 밀리초를 사용하여 정확한 날짜 계산
+        const date = new Date(startTimestamp + i * 24 * 60 * 60 * 1000);
 
         const dayEl = createDayElement(date, month);
         calendarGrid.appendChild(dayEl);
@@ -376,7 +470,7 @@ function closeEventModal() {
 }
 
 // 일정 제출 처리
-function handleEventSubmit(e) {
+async function handleEventSubmit(e) {
     e.preventDefault();
 
     const id = document.getElementById('eventId').value;
@@ -418,7 +512,7 @@ function handleEventSubmit(e) {
         events.push(newEvent);
     }
 
-    saveEvents();
+    await saveEvents();
     renderCalendar();
     
     if (selectedDate) {
@@ -443,10 +537,22 @@ function closeDeleteModal() {
 }
 
 // 삭제 확인
-function confirmDelete() {
+async function confirmDelete() {
     if (eventToDelete) {
+        // Firestore에서 삭제
+        if (window.db) {
+            try {
+                const { doc, deleteDoc, collection } = await import("https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js");
+                const eventRef = doc(collection(window.db, 'events'), eventToDelete);
+                await deleteDoc(eventRef);
+            } catch (error) {
+                console.error('일정 삭제 실패:', error);
+            }
+        }
+        
+        // 로컬 배열에서 삭제
         events = events.filter(e => e.id !== eventToDelete);
-        saveEvents();
+        await saveEvents();
         renderCalendar();
         
         if (selectedDate) {
@@ -511,27 +617,5 @@ function isSameDay(date1, date2) {
            date1.getDate() === date2.getDate();
 }
 
-// 초기화 실행
-window.initCalendar = init;
-
-// Firebase가 이미 로드되어 있으면 즉시 실행
-if (window.firebaseReady) {
-    init();
-} else {
-    // Firebase 로드를 기다림
-    const checkFirebase = setInterval(() => {
-        if (window.firebaseReady) {
-            clearInterval(checkFirebase);
-            init();
-        }
-    }, 100);
-    
-    // 최대 5초 대기
-    setTimeout(() => {
-        clearInterval(checkFirebase);
-        if (!window.firebaseReady) {
-            console.warn('Firebase 로드 시간 초과, LocalStorage 사용');
-            init();
-        }
-    }, 5000);
-}
+// 초기화 실행 (1회만)
+init();
